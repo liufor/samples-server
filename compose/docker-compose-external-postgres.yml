@@ -1,0 +1,95 @@
+services:
+  temporal-admin-tools:
+    image: temporalio/admin-tools:${TEMPORAL_ADMINTOOLS_VERSION}
+    container_name: temporal-admin-tools
+    restart: on-failure:6
+    environment:
+      - DB=postgres12
+      - DB_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PWD=${POSTGRES_PASSWORD}
+      - POSTGRES_SEEDS=${POSTGRES_HOST}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - SQL_PASSWORD=${POSTGRES_PASSWORD}
+      # Advanced Visibility with PostgreSQL
+      - VISIBILITY_POSTGRES_HOST=${POSTGRES_HOST}
+      - VISIBILITY_POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - VISIBILITY_POSTGRES_USER=${POSTGRES_USER}
+      - VISIBILITY_POSTGRES_PWD=${POSTGRES_PASSWORD}
+    networks:
+      - temporal-network
+    volumes:
+      - ./scripts:/scripts
+    entrypoint: ["/bin/sh"]
+    command: /scripts/setup-postgres.sh
+
+  temporal:
+    image: temporalio/server:${TEMPORAL_VERSION}
+    container_name: temporal
+    depends_on:
+      temporal-admin-tools:
+        condition: service_completed_successfully
+    environment:
+      - DB=postgres12
+      - DB_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PWD=${POSTGRES_PASSWORD}
+      - POSTGRES_SEEDS=${POSTGRES_HOST}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      # Advanced Visibility with PostgreSQL
+      - ENABLE_ADVANCED_VISIBILITY=true
+      - VISIBILITY_STORE=postgresql
+      - POSTGRES_VISIBILITY_SEEDS=${POSTGRES_HOST}
+      - POSTGRES_VISIBILITY_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_VISIBILITY_USER=${POSTGRES_USER}
+      - POSTGRES_VISIBILITY_PWD=${POSTGRES_PASSWORD}
+      - BIND_ON_IP=0.0.0.0
+      - DYNAMIC_CONFIG_FILE_PATH=config/dynamicconfig/development-sql.yaml
+    networks:
+      - temporal-network
+    ports:
+      - '7233:7233'
+    volumes:
+      - ./dynamicconfig:/etc/temporal/config/dynamicconfig
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "7233"]
+      interval: 5s
+      timeout: 3s
+      start_period: 30s
+      retries: 60
+
+  temporal-create-namespace:
+    image: temporalio/admin-tools:${TEMPORAL_ADMINTOOLS_VERSION}
+    container_name: temporal-create-namespace
+    restart: on-failure:5
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - DEFAULT_NAMESPACE=default
+    networks:
+      - temporal-network
+    volumes:
+      - ./scripts:/scripts
+    entrypoint: ["/bin/sh"]
+    command: /scripts/create-namespace.sh
+
+  temporal-ui:
+    container_name: temporal-ui
+    depends_on:
+      temporal:
+        condition: service_healthy
+    environment:
+      - TEMPORAL_ADDRESS=temporal:7233
+      - TEMPORAL_CORS_ORIGINS=http://localhost:3000
+    image: temporalio/ui:${TEMPORAL_UI_VERSION}
+    networks:
+      - temporal-network
+    ports:
+      - 18080:8080
+
+networks:
+  temporal-network:
+    driver: bridge
+    name: temporal-network
